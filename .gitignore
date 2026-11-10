@@ -1,0 +1,5 @@
+# Config
+/config.json
+
+# Python auto generated stuff
+__pycache__/
