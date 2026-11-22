@@ -1,119 +1,128 @@
-from PyQt6.QtWidgets import (
-    QWidget,
-    QFormLayout,
-    QComboBox,
-    QLineEdit,
-    QPushButton,
-    QHBoxLayout,
-    QFileDialog,
-    QMessageBox,
-    QKeySequenceEdit
-)
-from PyQt6.QtGui import QKeySequence
+"""Settings dialog for configuring Tesseract, languages, and the global shortcut."""
+
 from PyQt6.QtCore import pyqtSignal
-import pytesseract
-from deep_translator import MyMemoryTranslator
-from config import load_config, save_config
-TESSERACT_NAMES = {
-    "eng": "English",
-    "por": "Portuguese",
-    "chi_sim": "Simplified Chinese",
-    "chi_tra": "Traditional Chinese",
-    "kor": "Korean",
-    "ara": "Arabic",
-    "rus": "Russian",
-    "hin": "Hindi",
-    "jpn": "Japanese",
-    "jpn_vert": "Japanese (Vertical)",
-    "ita": "Italian",
-    "fra": "French",
-    "spa": "Spanish",
-    "deu": "German",
-    "osd": "OSD (Ignore)"
-}
+from PyQt6.QtGui import QKeySequence
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QKeySequenceEdit,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QWidget,
+)
+
+from core.config import AppConfig, load_config, save_config
+from core.ocr import get_installed_languages
+from core.translator import get_supported_languages
+
+
 class SettingsWindow(QWidget):
+    """Form-based configuration window that persists changes to `config.json`."""
+
     settings_saved = pyqtSignal()
-    def __init__(self):
-        super().__init__()
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
         self.setWindowTitle("Translator Settings")
         self.resize(600, 0)
-        cfg = load_config()
-        layout = QFormLayout()
-        self.tesseract_input = QLineEdit(cfg["TESSERACT_PATH"])
+
+        self._config = load_config()
+        self._setup_ui()
+        self._populate_translation_languages()
+        self._refresh_ocr_languages(initial_code=self._config.ocr_lang)
+
+    def _setup_ui(self) -> None:
+        """Create and arrange all form controls."""
+        layout = QFormLayout(self)
+
+        # Tesseract executable path + file browser
+        self.tesseract_input = QLineEdit(self._config.tesseract_path)
         browse_btn = QPushButton("Browse...")
-        browse_btn.clicked.connect(self.browse_tesseract)
-        tesseract_layout = QHBoxLayout()
-        tesseract_layout.addWidget(self.tesseract_input)
-        tesseract_layout.addWidget(browse_btn)
+        browse_btn.clicked.connect(self._browse_tesseract)
+
+        tesseract_row = QHBoxLayout()
+        tesseract_row.addWidget(self.tesseract_input)
+        tesseract_row.addWidget(browse_btn)
+
+        # Language selectors
         self.ocr_combo = QComboBox()
-        self.refresh_ocr_languages()                             
-        try:
-            translator = MyMemoryTranslator(source = "en-GB", target = "it-IT")
-            translation_langs = translator.get_supported_languages(as_dict=True)
-            translation_langs = {name.capitalize(): code for name, code in translation_langs.items()}
-        except Exception as e:
-            print(f"Could not fetch languages: {e}")
-            translation_langs = {"English": "en-GB", "Italian": "it-IT"}
         self.source_combo = QComboBox()
-        for name, code in translation_langs.items():
-            self.source_combo.addItem(name, code)
-        src_idx = self.source_combo.findData(cfg["TRANS_SOURCE"])
-        if src_idx >= 0: self.source_combo.setCurrentIndex(src_idx)
         self.target_combo = QComboBox()
-        for name, code in translation_langs.items():
-            if code != "auto":                                 
-                self.target_combo.addItem(name, code)
-        tgt_idx = self.target_combo.findData(cfg["TRANS_TARGET"])
-        if tgt_idx >= 0: self.target_combo.setCurrentIndex(tgt_idx)
-        current_sequence = QKeySequence(cfg["HOTKEY"])
-        self.hotkey_input = QKeySequenceEdit(current_sequence)
+
+        # Shortcut recorder
+        self.hotkey_input = QKeySequenceEdit(QKeySequence(self._config.hotkey))
+
+        # Save action
         save_btn = QPushButton("Save Settings")
-        save_btn.clicked.connect(self.save_settings)
-        layout.addRow("Tesseract Path:", tesseract_layout)
+        save_btn.clicked.connect(self._save_settings)
+
+        layout.addRow("Tesseract Path:", tesseract_row)
         layout.addRow("OCR Language:", self.ocr_combo)
         layout.addRow("Original Text is:", self.source_combo)
         layout.addRow("Translate into:", self.target_combo)
         layout.addRow("Shortcut Recorder:", self.hotkey_input)
         layout.addRow(save_btn)
-        self.setLayout(layout)
-    def browse_tesseract(self):
+
+    def _populate_translation_languages(self) -> None:
+        """Load supported source and target languages into the translation dropdowns."""
+        languages = get_supported_languages()
+
+        for name, code in languages.items():
+            self.source_combo.addItem(name, code)
+            if code != "auto":  # Target language cannot be auto-detected.
+                self.target_combo.addItem(name, code)
+
+        self._select_combo_by_data(self.source_combo, self._config.trans_source)
+        self._select_combo_by_data(self.target_combo, self._config.trans_target)
+
+    def _refresh_ocr_languages(self, initial_code: str | None = None) -> None:
+        """Query the configured Tesseract binary and repopulate available OCR languages."""
+        selected_code = initial_code or self.ocr_combo.currentData() or self._config.ocr_lang
+        self.ocr_combo.clear()
+
+        for code, label in get_installed_languages(self.tesseract_input.text()):
+            self.ocr_combo.addItem(label, code)
+
+        self._select_combo_by_data(self.ocr_combo, selected_code)
+
+    def _browse_tesseract(self) -> None:
+        """Open a file picker for selecting the Tesseract executable."""
         file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Select Tesseract Executable",
             self.tesseract_input.text(),
-            "Executables (*.exe);;All Files (*)"
+            "Executables (*.exe);;All Files (*)",
         )
         if file_path:
             self.tesseract_input.setText(file_path)
-            self.refresh_ocr_languages()
-    def refresh_ocr_languages(self):
-        path = self.tesseract_input.text()
-        pytesseract.pytesseract.tesseract_cmd = path
-        current_selection = self.ocr_combo.currentData() or load_config()["OCR_LANG"]
-        self.ocr_combo.clear()
-        try:
-            installed_langs = pytesseract.get_languages()
-        except Exception:
-            installed_langs = ['eng']
-        for code in installed_langs:
-            pretty_name = TESSERACT_NAMES.get(code, code)
-            self.ocr_combo.addItem(f"{pretty_name} ({code})", code)
-        ocr_idx = self.ocr_combo.findData(current_selection)
-        if ocr_idx >= 0:
-            self.ocr_combo.setCurrentIndex(ocr_idx)
-    def save_settings(self):
+            self._refresh_ocr_languages()
+
+    def _save_settings(self) -> None:
+        """Validate form values, save them to disk, and notify the controller."""
+        defaults = AppConfig()
         raw_sequence = self.hotkey_input.keySequence().toString()
-        formatted_hotkey = raw_sequence.lower().replace('meta', 'windows')
-        if not formatted_hotkey:
-            formatted_hotkey = "ctrl+shift+q"
-        cfg = {
-            "HOTKEY": formatted_hotkey,
-            "TESSERACT_PATH": self.tesseract_input.text(),
-            "OCR_LANG": self.ocr_combo.currentData() or "eng",
-            "TRANS_SOURCE": self.source_combo.currentData() or "en-GB",
-            "TRANS_TARGET": self.target_combo.currentData() or "it-IT",
-        }
-        save_config(cfg)
+        normalized_hotkey = raw_sequence.lower().replace("meta", "windows") or defaults.hotkey
+
+        updated_config = AppConfig(
+            hotkey=normalized_hotkey,
+            tesseract_path=self.tesseract_input.text().strip() or defaults.tesseract_path,
+            ocr_lang=self.ocr_combo.currentData() or defaults.ocr_lang,
+            trans_source=self.source_combo.currentData() or defaults.trans_source,
+            trans_target=self.target_combo.currentData() or defaults.trans_target,
+        )
+
+        save_config(updated_config)
         self.settings_saved.emit()
+
         QMessageBox.information(self, "Saved", "Settings applied successfully!")
         self.close()
+
+    @staticmethod
+    def _select_combo_by_data(combo: QComboBox, value: str) -> None:
+        """Select the dropdown item matching `value`, if present."""
+        index = combo.findData(value)
+        if index >= 0:
+            combo.setCurrentIndex(index)

@@ -1,1 +1,1 @@
-
+"""Core backend services for screen capture, OCR, translation, and configuration."""

@@ -1,9 +1,9 @@
-from PIL import ImageGrab
-def capture_region(x, y, width, height):
-    left = x
-    top = y
-    right = x + width
-    bottom = y + height
-    bbox = (left, top, right, bottom)
-    image = ImageGrab.grab(bbox)
-    return image
+"""Screen region capture utilities."""
+
+from PIL import Image, ImageGrab
+
+
+def capture_region(x: int, y: int, width: int, height: int) -> Image.Image:
+    """Capture a rectangular region of the screen in physical pixel coordinates."""
+    bbox = (x, y, x + width, y + height)
+    return ImageGrab.grab(bbox=bbox)
